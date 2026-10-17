@@ -1,0 +1,24 @@
+name: Release
+
+# Pushing a tag like update-go/v1.2.3 moves the floating update-go/v1 tag to it.
+on:
+  push:
+    tags:
+      - "*/v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  move-major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Move major tag
+        run: |
+          name="${GITHUB_REF_NAME%/*}"
+          major="${GITHUB_REF_NAME##*/}"
+          major="${major%%.*}"
+          git tag -f "${name}/${major}" "$GITHUB_SHA"
+          git push --force origin "refs/tags/${name}/${major}"
