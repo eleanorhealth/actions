@@ -5,8 +5,11 @@ Shared GitHub Actions for Eleanor Health repositories, one directory per action.
 | Action | Purpose |
 |---|---|
 | [`update-go`](update-go) | Bump Go dependencies and the Go version, open a PR |
+| [`update-js`](update-js) | Bump JS dependencies with npm-check-updates, open a PR |
 
 `lib/` holds scripts shared by several actions (they are called through `${{ github.action_path }}/../lib`).
+`lib/create-pr` commits the files an action changed, pushes a branch and opens or refreshes the PR; it is
+configured through env vars (see the header of the script), each action sets them.
 
 ## Using an action
 
@@ -79,7 +82,102 @@ jobs:
 | `github-token` | required | pushes the branch, opens the PR |
 | `pinned-deps` | none | whitespace separated modules to leave alone |
 | `pr-branch` | `chore/update-dependencies-go` | |
+| `pr-title` | `chore(deps): weekly Go dependency update` | |
 | `pr-labels` | `dependencies,go` | |
 | `base-branch` | `main` | |
 
+Empty strings fall back to the defaults, so `workflow_dispatch` inputs can be forwarded as they are.
 Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.
+
+## update-js
+
+Runs [npm-check-updates](https://github.com/raineorshine/npm-check-updates) on the direct dependencies
+(major bumps included), then `yarn install` to refresh `yarn.lock`, and opens or refreshes one PR on
+`chore/update-dependencies-js`. The PR commits `package.json`, `packages/*/package.json` and `yarn.lock`.
+
+The action does not install anything: the caller sets up node, yarn and the registry auth (for private
+`@eleanorhealth` packages) before it, for example with the repo's `bin/setup`.
+
+Packages that stay on a major or minor, or are skipped, go in the repo's `.ncurc.js`, which
+npm-check-updates reads from the working directory:
+
+```js
+const KEPT_MAJOR = {
+  "@types/node": "minor", // match the node version in Dockerfile
+  jsdom: "minor", // 28+ breaks the modal tests
+};
+
+module.exports = {
+  target: (name) => KEPT_MAJOR[name] ?? "latest",
+  reject: ["@eleanorhealth/*"], // skipped entirely
+};
+```
+
+Caller example:
+
+```yaml
+name: Update JS dependencies
+
+on:
+  schedule:
+    - cron: "0 16 * * 2" # Tuesday 16:00 UTC
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Comma-separated npm-check-updates --filter globs. Leave empty to update everything."
+        required: false
+        default: ""
+      pr_branch:
+        description: "Branch name for this update. Leave empty for the default."
+        required: false
+        default: ""
+      pr_title:
+        description: "PR title. Leave empty for the default."
+        required: false
+        default: ""
+      base_branch:
+        description: "PR base branch"
+        required: false
+        default: "main"
+
+concurrency:
+  group: update-dependencies-js
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0 # create-pr diffs against the base branch
+
+      - name: Setup toolchain and install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: ./bin/setup
+
+      - uses: eleanorhealth/actions/update-js@update-js/v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          packages: ${{ inputs.packages }}
+          workspaces: "true" # yarn workspaces repos only
+          pr-branch: ${{ inputs.pr_branch }}
+          pr-title: ${{ inputs.pr_title }}
+          base-branch: ${{ inputs.base_branch }}
+```
+
+| Input | Default | |
+|---|---|---|
+| `github-token` | required | pushes the branch, opens the PR |
+| `packages` | all | comma separated `--filter` globs, for scoped update PRs |
+| `workspaces` | `false` | `true` also updates the root and every workspace `package.json` |
+| `pr-branch` | `chore/update-dependencies-js` | |
+| `pr-title` | `chore(deps): weekly JS dependency update` | |
+| `pr-labels` | `dependencies,javascript` | |
+| `base-branch` | `main` | |
+
+Outputs: `updated` and `pr-url`, as for `update-go`.

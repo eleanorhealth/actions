@@ -1,0 +1,71 @@
+name: Update JS dependencies
+description: >-
+  Updates direct JS dependencies with npm-check-updates (major bumps included), refreshes yarn.lock,
+  then opens or refreshes a PR. Run after actions/checkout (fetch-depth: 0) and whatever installs
+  node, yarn and the registry auth your repo needs. Pins live in the repo's .ncurc.js.
+
+inputs:
+  github-token:
+    description: Token used to push the branch and open the PR (needs contents and pull-requests write)
+    required: true
+  packages:
+    description: Comma separated npm-check-updates --filter globs. Empty updates everything
+    required: false
+    default: ""
+  workspaces:
+    description: '"true" to also update the root and every workspace package.json'
+    required: false
+    default: "false"
+  pr-branch:
+    description: Branch the update is pushed to (default chore/update-dependencies-js)
+    required: false
+    default: ""
+  pr-title:
+    description: 'PR title (default "chore(deps): weekly JS dependency update")'
+    required: false
+    default: ""
+  pr-labels:
+    description: Comma separated PR labels (default dependencies,javascript)
+    required: false
+    default: ""
+  base-branch:
+    description: PR target branch (default main)
+    required: false
+    default: ""
+
+outputs:
+  updated:
+    description: '"true" if a PR was created or refreshed'
+    value: ${{ steps.create-pr.outputs.updated }}
+  pr-url:
+    description: URL of the created or refreshed PR
+    value: ${{ steps.create-pr.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Update dependencies
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        WORKSPACES: ${{ inputs.workspaces }}
+      run: bash "${{ github.action_path }}/bin/update-deps"
+
+    - name: Create PR
+      id: create-pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
+        PR_FILES: package.json packages/*/package.json yarn.lock
+        PR_DIFF_EXCLUDE: yarn.lock
+        PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-js' }}
+        PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly JS dependency update' }}"
+        PR_COMMIT_MESSAGE: "chore(deps): update JS dependencies"
+        PR_BODY_HEADING: JS dependency updates
+        PR_BODY_INTRO: >-
+          Direct dependencies were updated to their latest version, including major
+          versions. Check CI and review the diff for breaking changes before merging.
+        PR_LABELS: ${{ inputs.pr-labels || 'dependencies,javascript' }}
+        BASE_BRANCH: ${{ inputs.base-branch || 'main' }}
+      run: bash "${{ github.action_path }}/../lib/create-pr"

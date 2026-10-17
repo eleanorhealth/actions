@@ -1,29 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Creates or updates a PR with the changes produced by update-deps.
+# Creates or updates a PR with the changes an update action left in the working tree.
 # Idempotent: if a PR already exists on the update branch, it refreshes the body
 # and force-pushes the branch instead of opening a duplicate.
 #
 # Environment variables:
-#   GH_TOKEN      - GitHub token with repo + PR write access (required in CI)
-#   PR_BRANCH     - branch name for the update (default: chore/update-dependencies-go)
-#   PR_LABELS     - comma-separated labels (default: "dependencies,go")
-#   BASE_BRANCH   - PR target branch (default: main)
+#   GH_TOKEN           - GitHub token with repo + PR write access (required in CI)
+#   PR_FILES           - whitespace separated pathspecs that may hold changes, globs allowed (required)
+#   PR_DIFF_EXCLUDE    - pathspecs left out of the PR body diff, e.g. lockfiles (default: none)
+#   PR_BRANCH          - branch name for the update (default: chore/update-dependencies)
+#   PR_TITLE           - PR title (default: "chore(deps): weekly dependency update")
+#   PR_COMMIT_MESSAGE  - commit message (default: PR_TITLE)
+#   PR_BODY_HEADING    - PR body heading (default: "Dependency updates")
+#   PR_BODY_INTRO      - markdown shown above the diff (default: none)
+#   PR_LABELS          - comma-separated labels (default: "dependencies")
+#   BASE_BRANCH        - PR target branch (default: main)
 
-PR_BRANCH="${PR_BRANCH:-chore/update-dependencies-go}"
-PR_LABELS="${PR_LABELS:-dependencies,go}"
+PR_BRANCH="${PR_BRANCH:-chore/update-dependencies}"
+PR_TITLE="${PR_TITLE:-chore(deps): weekly dependency update}"
+PR_COMMIT_MESSAGE="${PR_COMMIT_MESSAGE:-$PR_TITLE}"
+PR_BODY_HEADING="${PR_BODY_HEADING:-Dependency updates}"
+PR_BODY_INTRO="${PR_BODY_INTRO:-}"
+PR_LABELS="${PR_LABELS:-dependencies}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 
-# Files update-deps may modify (go.mod/go.sum always, the rest only on a Go version bump)
-FILES=()
-for file in go.mod go.sum Dockerfile .tool-versions; do
-  [[ -f "$file" ]] && FILES+=("$file")
-done
+read -r -d '' -a FILE_SPECS <<< "${PR_FILES:?PR_FILES is required}" || true
+read -r -d '' -a EXCLUDES <<< "${PR_DIFF_EXCLUDE:-}" || true
+
+# Files that changed among the pathspecs. Unlike git add, ls-files does not fail
+# on a pathspec that matches nothing (e.g. packages/*/package.json without workspaces).
+mapfile -d '' -t CHANGED < <(git ls-files -z --modified --others --exclude-standard -- "${FILE_SPECS[@]}")
 
 # No-op if nothing changed
-if git diff --quiet -- "${FILES[@]}" 2>/dev/null; then
-  echo "No changes to ${FILES[*]} — nothing to do."
+if [[ ${#CHANGED[@]} -eq 0 ]]; then
+  echo "No changes to ${FILE_SPECS[*]} — nothing to do."
   [[ -n "${GITHUB_OUTPUT:-}" ]] && echo "updated=false" >> "$GITHUB_OUTPUT"
   exit 0
 fi
@@ -34,23 +45,30 @@ git config user.name "github-actions[bot]" 2>/dev/null || true
 
 # Create/reset the update branch off the current HEAD (which is main in CI)
 git checkout -B "$PR_BRANCH"
-git add -- "${FILES[@]}"
-git commit -m "chore(deps): update Go dependencies"
+git add -- "${CHANGED[@]}"
+# --no-verify: pre-commit hooks may run tooling the update just bumped (husky, lint-staged,
+# eslint), so a major bump can break the hook before CI gets a chance to lint the PR.
+git commit --no-verify -m "$PR_COMMIT_MESSAGE"
 git push origin "$PR_BRANCH" --force-with-lease
 
-# Build a PR body showing the diff (go.sum excluded, it is noise)
-DIFF=$(git diff "origin/${BASE_BRANCH}" -- "${FILES[@]}" ':!go.sum' 2>/dev/null || git diff HEAD~1 -- "${FILES[@]}" ':!go.sum')
-BODY="## Go dependency updates
+# Build a PR body showing the diff of the changed files
+DIFF_SPECS=("${CHANGED[@]}")
+for exclude in "${EXCLUDES[@]}"; do
+  DIFF_SPECS+=(":(exclude)$exclude")
+done
+DIFF=$(git diff "origin/${BASE_BRANCH}" -- "${DIFF_SPECS[@]}" 2>/dev/null || git diff HEAD~1 -- "${DIFF_SPECS[@]}")
+INTRO="${PR_BODY_INTRO:+$PR_BODY_INTRO
 
-\`\`\`diff
+}"
+BODY="## ${PR_BODY_HEADING}
+
+${INTRO}\`\`\`diff
 ${DIFF}
 \`\`\`
 
 ---
-*Automated update via the \`update-dependencies-go\` workflow.*"
+*Automated update via the \`${GITHUB_WORKFLOW:-update-dependencies}\` workflow.*"
 
-# Check for an existing open PR on this branch via REST (avoids GraphQL which
-# the GitHub App token cannot access via repository.pullRequests).
 OWNER_REPO=$(git remote get-url origin | sed -E 's|.*github\.com[:/]||; s|\.git$||')
 OWNER="${OWNER_REPO%%/*}"
 
@@ -66,7 +84,7 @@ else
   echo "Creating new PR..."
   PR_RESPONSE=$(gh api "repos/${OWNER_REPO}/pulls" \
     --method POST \
-    --field title="chore(deps): weekly Go dependency update" \
+    --field title="$PR_TITLE" \
     --field body="$BODY" \
     --field head="$PR_BRANCH" \
     --field base="$BASE_BRANCH")
