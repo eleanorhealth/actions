@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Updates all direct dependencies in go.mod to their latest versions and
+# optionally bumps the Go version (go.mod, Dockerfile, .tool-versions).
+#
+# Environment variables (set by the workflow from detect-go-version outputs):
+#   NEEDS_GO_UPDATE  - "true" to bump the Go version
+#   LATEST_GO_FULL   - e.g. "1.27.2"
+#   PINNED_DEPS      - whitespace separated module paths to leave at their current version
+
+GO_MOD="${GO_MOD_FILE:-go.mod}"
+NEEDS_GO_UPDATE="${NEEDS_GO_UPDATE:-false}"
+LATEST_GO_FULL="${LATEST_GO_FULL:-}"
+DOCKERFILE="${DOCKERFILE:-Dockerfile}"
+TOOL_VERSIONS="${TOOL_VERSIONS_FILE:-.tool-versions}"
+
+# Direct dependencies to keep at their current version, whitespace separated
+# (the pinned-deps input). Use for license or other constraints that prevent upgrading.
+read -r -d '' -a PINNED_DEPS <<< "${PINNED_DEPS:-}" || true
+
+# Collect direct (non-indirect) dependency paths using go mod edit -json.
+# This is reliable and avoids fragile text parsing of go.mod.
+DIRECTS=$(go mod edit -json "$GO_MOD" | jq -r '.Require[]? | select(.Indirect != true) | .Path')
+
+# Remove pinned dependencies so they are not bumped to @latest.
+for dep in "${PINNED_DEPS[@]}"; do
+  DIRECTS=$(echo "$DIRECTS" | grep -v "^${dep}$" || true)
+done
+
+if [[ -z "$DIRECTS" ]]; then
+  echo "No direct dependencies found in $GO_MOD."
+else
+  # Build a single "go get" invocation with all deps@latest.
+  # Batching avoids redundant module graph resolutions.
+  ARGS=$(echo "$DIRECTS" | awk '{print $1 "@latest"}' | tr '\n' ' ')
+  echo "Updating direct dependencies..."
+  # shellcheck disable=SC2086
+  go get $ARGS
+fi
+
+# Bump the Go version if a new minor or patch is available
+if [[ "$NEEDS_GO_UPDATE" == "true" ]] && [[ -n "$LATEST_GO_FULL" ]]; then
+  echo "Bumping go directive: -> $LATEST_GO_FULL"
+  go mod edit -go="$LATEST_GO_FULL"
+
+  # Only touch toolchain if the directive already exists in go.mod
+  if go mod edit -json "$GO_MOD" | jq -e '.Toolchain != null' > /dev/null 2>&1; then
+    echo "Updating toolchain directive: -> go$LATEST_GO_FULL"
+    go mod edit -toolchain="go${LATEST_GO_FULL}"
+  fi
+
+  if [[ -f "$DOCKERFILE" ]]; then
+    echo "Updating $DOCKERFILE base image: -> golang:$LATEST_GO_FULL"
+    sed -i -E "s|^(FROM golang:)[0-9][0-9.]*|\1${LATEST_GO_FULL}|" "$DOCKERFILE"
+  fi
+
+  if [[ -f "$TOOL_VERSIONS" ]]; then
+    echo "Updating $TOOL_VERSIONS: -> golang $LATEST_GO_FULL"
+    sed -i -E "s|^(golang )[0-9][0-9.]*|\1${LATEST_GO_FULL}|" "$TOOL_VERSIONS"
+  fi
+fi
+
+echo "Running go mod tidy..."
+go mod tidy
+
+echo "Done."
