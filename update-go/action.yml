@@ -12,17 +12,21 @@ inputs:
     required: false
     default: ""
   pr-branch:
-    description: Branch the update is pushed to
+    description: Branch the update is pushed to (default chore/update-dependencies-go)
     required: false
-    default: chore/update-dependencies-go
+    default: ""
+  pr-title:
+    description: 'PR title (default "chore(deps): weekly Go dependency update")'
+    required: false
+    default: ""
   pr-labels:
-    description: Comma separated PR labels
+    description: Comma separated PR labels (default dependencies,go)
     required: false
-    default: dependencies,go
+    default: ""
   base-branch:
-    description: PR target branch
+    description: PR target branch (default main)
     required: false
-    default: main
+    default: ""
 
 outputs:
   updated:
@@ -57,7 +61,13 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        PR_BRANCH: ${{ inputs.pr-branch }}
-        PR_LABELS: ${{ inputs.pr-labels }}
-        BASE_BRANCH: ${{ inputs.base-branch }}
+        # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
+        PR_FILES: go.mod go.sum Dockerfile .tool-versions
+        PR_DIFF_EXCLUDE: go.sum
+        PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-go' }}
+        PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly Go dependency update' }}"
+        PR_COMMIT_MESSAGE: "chore(deps): update Go dependencies"
+        PR_BODY_HEADING: Go dependency updates
+        PR_LABELS: ${{ inputs.pr-labels || 'dependencies,go' }}
+        BASE_BRANCH: ${{ inputs.base-branch || 'main' }}
       run: bash "${{ github.action_path }}/../lib/create-pr"

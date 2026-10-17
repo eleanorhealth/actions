@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Updates direct dependencies in package.json to their latest version (including
+# major bumps) and refreshes yarn.lock. Run from the repo root.
+#
+# Major bumps will occasionally break the build -- that's expected and
+# fixed as it comes up, rather than letting deps drift indefinitely.
+#
+# Packages that stay on a given major or minor, or are skipped, are configured in
+# the repo's .ncurc.js (npm-check-updates picks it up from the working directory).
+#
+# Env vars:
+#   PACKAGES   - optional comma-separated npm-check-updates --filter globs.
+#                When set, only matching packages are updated (used for
+#                scoped/curated update PRs). When unset, all direct
+#                dependencies are updated (the normal weekly run).
+#   WORKSPACES - "true" to also update the root and every workspace package.json
+
+PACKAGES="${PACKAGES:-}"
+WORKSPACES="${WORKSPACES:-false}"
+
+ARGS=(-u)
+
+if [[ "$WORKSPACES" == "true" ]]; then
+  ARGS+=(--root --workspaces)
+fi
+
+if [[ -n "$PACKAGES" ]]; then
+  echo "Updating selected dependencies: $PACKAGES"
+  ARGS+=(--filter "$PACKAGES")
+else
+  echo "Updating direct dependencies..."
+fi
+
+npx --yes npm-check-updates@latest "${ARGS[@]}"
+
+echo "Running yarn install..."
+yarn install
+
+echo "Done."
