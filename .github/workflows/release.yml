@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag like update-go-deps/v1.2.3 moves the floating update-go-deps/v1 tag to it.
+# Pushing a tag like update-go/v1.2.3 moves the floating update-go/v1 tag to it.
 on:
   push:
     tags:

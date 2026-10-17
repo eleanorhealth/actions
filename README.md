@@ -4,7 +4,7 @@ Shared GitHub Actions for Eleanor Health repositories, one directory per action.
 
 | Action | Purpose |
 |---|---|
-| [`update-go-deps`](update-go-deps) | Bump Go dependencies and the Go version, open a PR |
+| [`update-go`](update-go) | Bump Go dependencies and the Go version, open a PR |
 
 `lib/` holds scripts shared by several actions (they are called through `${{ github.action_path }}/../lib`).
 
@@ -13,7 +13,7 @@ Shared GitHub Actions for Eleanor Health repositories, one directory per action.
 Pin the floating major tag so fixes arrive without a PR to every repo:
 
 ```yaml
-- uses: eleanorhealth/actions/update-go-deps@update-go-deps/v1
+- uses: eleanorhealth/actions/update-go@update-go/v1
 ```
 
 This repo must allow access from other repositories: Settings, Actions, General, Access,
@@ -21,14 +21,14 @@ This repo must allow access from other repositories: Settings, Actions, General,
 
 ## Versioning
 
-Each action is versioned on its own with tags named `<action>/vX.Y.Z`, for example `update-go-deps/v1.2.3`.
+Each action is versioned on its own with tags named `<action>/vX.Y.Z`, for example `update-go/v1.2.3`.
 
-- Release: `git tag update-go-deps/v1.2.3 && git push origin update-go-deps/v1.2.3`.
-- The [release workflow](.github/workflows/release.yml) then moves `update-go-deps/v1` to that commit.
+- Release: `git tag update-go/v1.2.3 && git push origin update-go/v1.2.3`.
+- The [release workflow](.github/workflows/release.yml) then moves `update-go/v1` to that commit.
 - A change under `lib/` only reaches callers once each action that uses it is re-tagged.
 - Breaking changes get a new major (`v2`), callers opt in by changing the ref.
 
-## update-go-deps
+## update-go
 
 Runs `go get <module>@latest` for every direct dependency, bumps the Go version to the latest stable
 release (minor or patch) in `go.mod`, `Dockerfile` (`FROM golang:`) and `.tool-versions` when they exist,
@@ -68,7 +68,7 @@ jobs:
       # only if you have private modules
       - run: git config --global url."https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/eleanorhealth".insteadOf "https://github.com/eleanorhealth"
 
-      - uses: eleanorhealth/actions/update-go-deps@update-go-deps/v1
+      - uses: eleanorhealth/actions/update-go@update-go/v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pinned-deps: github.com/unidoc/unipdf/v3 # optional
