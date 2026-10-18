@@ -98,6 +98,8 @@ Runs [npm-check-updates](https://github.com/raineorshine/npm-check-updates) on t
 The action does not install anything: the caller sets up node, yarn and the registry auth (for private
 `@eleanorhealth` packages) before it, for example with the repo's `bin/setup`.
 
+After npm-check-updates runs, exact pins in the root `resolutions` (for example `"react": "19.3.0"`) are moved to the version of the matching direct dependency. Without that, yarn installs two copies of the package. Ranges are left alone.
+
 Packages that stay on a major or minor, or are skipped, go in the repo's `.ncurc.js`, which
 npm-check-updates reads from the working directory:
 
