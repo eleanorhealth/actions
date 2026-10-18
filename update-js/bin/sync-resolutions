@@ -1,15 +1,14 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env node
+// Keeps root package.json "resolutions" in step with the versions npm-check-updates
+// just wrote. A resolution that pins a package the repo also depends on directly
+// (react, react-dom...) would otherwise stay on the old version, and yarn would
+// install both copies. Only exact pins are synced; ranges and resolutions for
+// packages that are not direct dependencies are left alone. Run from the repo root.
 
-# Keeps root package.json "resolutions" in step with the versions npm-check-updates
-# just wrote. A resolution that pins a package the repo also depends on directly
-# (react, react-dom...) would otherwise stay on the old version, and yarn would
-# install both copies. Only exact pins are synced; ranges and resolutions for
-# packages that are not direct dependencies are left alone. Run from the repo root.
-
-node - <<'JS'
 const fs = require("fs");
-const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+
+const raw = fs.readFileSync("package.json", "utf8");
+const pkg = JSON.parse(raw);
 const resolutions = pkg.resolutions;
 if (!resolutions) process.exit(0);
 
@@ -31,7 +30,6 @@ for (const name of Object.keys(resolutions)) {
 }
 
 if (changed) {
-  const indent = (fs.readFileSync("package.json", "utf8").match(/^[ \t]+(?=")/m) || ["  "])[0];
+  const indent = (raw.match(/^[ \t]+(?=")/m) || ["  "])[0];
   fs.writeFileSync("package.json", JSON.stringify(pkg, null, indent) + "\n");
 }
-JS

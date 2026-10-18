@@ -35,7 +35,7 @@ fi
 
 npx --yes npm-check-updates@latest "${ARGS[@]}"
 
-bash "$(dirname "${BASH_SOURCE[0]}")/sync-resolutions"
+node "$(dirname "${BASH_SOURCE[0]}")/sync-resolutions"
 
 echo "Running yarn install..."
 yarn install
