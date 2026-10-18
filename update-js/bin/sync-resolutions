@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Keeps root package.json "resolutions" in step with the versions npm-check-updates
+# just wrote. A resolution that pins a package the repo also depends on directly
+# (react, react-dom...) would otherwise stay on the old version, and yarn would
+# install both copies. Only exact pins are synced; ranges and resolutions for
+# packages that are not direct dependencies are left alone. Run from the repo root.
+
+node - <<'JS'
+const fs = require("fs");
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const resolutions = pkg.resolutions;
+if (!resolutions) process.exit(0);
+
+const direct = {
+  ...pkg.devDependencies,
+  ...pkg.optionalDependencies,
+  ...pkg.dependencies,
+};
+
+let changed = false;
+for (const name of Object.keys(resolutions)) {
+  const version = direct[name];
+  const pinned = /^\d+\.\d+\.\d+/.test(resolutions[name]);
+  if (pinned && version && resolutions[name] !== version) {
+    console.log(`resolutions: ${name} ${resolutions[name]} -> ${version}`);
+    resolutions[name] = version;
+    changed = true;
+  }
+}
+
+if (changed) {
+  const indent = (fs.readFileSync("package.json", "utf8").match(/^[ \t]+(?=")/m) || ["  "])[0];
+  fs.writeFileSync("package.json", JSON.stringify(pkg, null, indent) + "\n");
+}
+JS
