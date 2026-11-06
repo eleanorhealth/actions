@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Updates direct dependencies in package.json to their latest version (including
-# major bumps) and refreshes yarn.lock. Run from the repo root.
+# major bumps) and refreshes the lockfile: pnpm-lock.yaml when the repo has one,
+# yarn.lock otherwise. Run from the repo root.
 #
 # Major bumps will occasionally break the build -- that's expected and
 # fixed as it comes up, rather than letting deps drift indefinitely.
@@ -22,6 +23,13 @@ WORKSPACES="${WORKSPACES:-false}"
 
 ARGS=(-u)
 
+PACKAGE_MANAGER=yarn
+if [[ -f pnpm-lock.yaml ]]; then
+  PACKAGE_MANAGER=pnpm
+  # Lets npm-check-updates find the workspaces in pnpm-workspace.yaml.
+  ARGS+=(--packageManager pnpm)
+fi
+
 if [[ "$WORKSPACES" == "true" ]]; then
   ARGS+=(--root --workspaces)
 fi
@@ -37,7 +45,12 @@ npx --yes npm-check-updates@latest "${ARGS[@]}"
 
 node "$(dirname "${BASH_SOURCE[0]}")/sync-resolutions"
 
-echo "Running yarn install..."
-yarn install
+echo "Running $PACKAGE_MANAGER install..."
+if [[ "$PACKAGE_MANAGER" == "pnpm" ]]; then
+  # pnpm freezes the lockfile by default in CI; here refreshing it is the point.
+  pnpm install --no-frozen-lockfile
+else
+  yarn install
+fi
 
 echo "Done."
