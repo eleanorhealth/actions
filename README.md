@@ -92,13 +92,16 @@ Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.
 ## update-js
 
 Runs [npm-check-updates](https://github.com/raineorshine/npm-check-updates) on the direct dependencies
-(major bumps included), then `yarn install` to refresh `yarn.lock`, and opens or refreshes one PR on
-`chore/update-dependencies-js`. The PR commits `package.json`, `packages/*/package.json` and `yarn.lock`.
+(major bumps included), then refreshes the lockfile, and opens or refreshes one PR on
+`chore/update-dependencies-js`. A repo with a `pnpm-lock.yaml` gets `pnpm install`; any other gets
+`yarn install`. The PR commits `package.json`, `packages/*/package.json` and the lockfile.
 
-The action does not install anything: the caller sets up node, yarn and the registry auth (for private
-`@eleanorhealth` packages) before it, for example with the repo's `bin/setup`.
+The action does not install anything: the caller sets up node, the package manager and the registry
+auth (for private `@eleanorhealth` packages) before it, for example with the repo's `bin/setup`, or
+`corepack enable` for a pnpm repo that pins `packageManager`.
 
-After npm-check-updates runs, exact pins in the root `resolutions` (for example `"react": "19.3.0"`) are moved to the version of the matching direct dependency. Without that, yarn installs two copies of the package. Ranges are left alone.
+After npm-check-updates runs, exact pins in the root `resolutions` (for example `"react": "19.3.0"`) are moved to the version of the matching direct dependency. Without that, yarn installs two copies of the package. Ranges are left alone. pnpm's `pnpm.overrides`
+are not synced.
 
 Packages that stay on a major or minor, or are skipped, go in the repo's `.ncurc.js`, which
 npm-check-updates reads from the working directory:
@@ -166,7 +169,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           packages: ${{ inputs.packages }}
-          workspaces: "true" # yarn workspaces repos only
+          workspaces: "true" # yarn or pnpm workspaces repos only
           pr-branch: ${{ inputs.pr_branch }}
           pr-title: ${{ inputs.pr_title }}
           base-branch: ${{ inputs.base_branch }}
