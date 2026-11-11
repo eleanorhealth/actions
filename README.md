@@ -85,6 +85,7 @@ jobs:
 | `pr-title` | `chore(deps): weekly Go dependency update` | |
 | `pr-labels` | `dependencies,go` | |
 | `base-branch` | `main` | |
+| `working-directory` | `.` | directory with `go.mod`, `Dockerfile` and `.tool-versions`, for monorepos with one module per directory. Each directory's own `.tool-versions` is updated |
 
 Empty strings fall back to the defaults, so `workflow_dispatch` inputs can be forwarded as they are.
 Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.

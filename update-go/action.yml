@@ -27,6 +27,10 @@ inputs:
     description: PR target branch (default main)
     required: false
     default: ""
+  working-directory:
+    description: Directory holding go.mod and the Dockerfile, relative to the repo root (default .), for monorepos with one module per directory
+    required: false
+    default: ""
 
 outputs:
   updated:
@@ -42,10 +46,12 @@ runs:
     - name: Detect Go version
       id: detect-go-version
       shell: bash
+      working-directory: ${{ inputs.working-directory || '.' }}
       run: bash "${{ github.action_path }}/bin/detect-go-version"
 
     - name: Update dependencies
       shell: bash
+      working-directory: ${{ inputs.working-directory || '.' }}
       env:
         NEEDS_GO_UPDATE: ${{ steps.detect-go-version.outputs.needs_go_update }}
         LATEST_GO_FULL: ${{ steps.detect-go-version.outputs.latest_go_full }}
@@ -59,6 +65,7 @@ runs:
     - name: Create PR
       id: create-pr
       shell: bash
+      working-directory: ${{ inputs.working-directory || '.' }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
