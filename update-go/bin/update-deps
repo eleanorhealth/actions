@@ -7,12 +7,14 @@ set -euo pipefail
 # Environment variables (set by the workflow from detect-go-version outputs):
 #   NEEDS_GO_UPDATE  - "true" to bump the Go version
 #   LATEST_GO_FULL   - e.g. "1.27.2"
+#   WORKSPACE_DIR    - absolute path of a go.work / .tool-versions directory to bump too (optional)
 #   PINNED_DEPS      - whitespace separated module paths to leave at their current version
 
 GO_MOD="${GO_MOD_FILE:-go.mod}"
 NEEDS_GO_UPDATE="${NEEDS_GO_UPDATE:-false}"
 LATEST_GO_FULL="${LATEST_GO_FULL:-}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-}"
 TOOL_VERSIONS="${TOOL_VERSIONS_FILE:-.tool-versions}"
 
 # Direct dependencies to keep at their current version, whitespace separated
@@ -58,6 +60,28 @@ if [[ "$NEEDS_GO_UPDATE" == "true" ]] && [[ -n "$LATEST_GO_FULL" ]]; then
   if [[ -f "$TOOL_VERSIONS" ]]; then
     echo "Updating $TOOL_VERSIONS: -> golang $LATEST_GO_FULL"
     sed -i -E "s|^(golang )[0-9][0-9.]*|\1${LATEST_GO_FULL}|" "$TOOL_VERSIONS"
+  fi
+
+  # Monorepo: raise the go.work go line and the workspace .tool-versions to the new version,
+  # but never lower them (another module's PR may already have raised them).
+  if [[ -n "$WORKSPACE_DIR" ]]; then
+    WORK_FILE="$WORKSPACE_DIR/go.work"
+    if [[ -f "$WORK_FILE" ]]; then
+      WORK_GO=$(awk '$1 == "go" {print $2; exit}' "$WORK_FILE")
+      if [[ "$(printf '%s\n%s\n' "$WORK_GO" "$LATEST_GO_FULL" | sort -V | tail -1)" == "$LATEST_GO_FULL" ]]; then
+        echo "Bumping $WORK_FILE: $WORK_GO -> $LATEST_GO_FULL"
+        (cd "$WORKSPACE_DIR" && go work edit -go="$LATEST_GO_FULL")
+      fi
+    fi
+
+    WORK_TOOL_VERSIONS="$WORKSPACE_DIR/.tool-versions"
+    if [[ -f "$WORK_TOOL_VERSIONS" ]]; then
+      WORK_TOOL_GO=$(awk '$1 == "golang" {print $2; exit}' "$WORK_TOOL_VERSIONS")
+      if [[ -n "$WORK_TOOL_GO" ]] && [[ "$(printf '%s\n%s\n' "$WORK_TOOL_GO" "$LATEST_GO_FULL" | sort -V | tail -1)" == "$LATEST_GO_FULL" ]]; then
+        echo "Updating $WORK_TOOL_VERSIONS: golang $WORK_TOOL_GO -> $LATEST_GO_FULL"
+        sed -i -E "s|^(golang )[0-9][0-9.]*|\1${LATEST_GO_FULL}|" "$WORK_TOOL_VERSIONS"
+      fi
+    fi
   fi
 fi
 
