@@ -31,6 +31,10 @@ inputs:
     description: Directory holding go.mod and the Dockerfile, relative to the repo root (default .), for monorepos with one module per directory
     required: false
     default: ""
+  workspace-directory:
+    description: Directory holding go.work and a shared .tool-versions, relative to the repo root (default none). Their Go version is raised, never lowered, with each module's update
+    required: false
+    default: ""
 
 outputs:
   updated:
@@ -49,6 +53,19 @@ runs:
       working-directory: ${{ inputs.working-directory || '.' }}
       run: bash "${{ github.action_path }}/bin/detect-go-version"
 
+    - name: Resolve workspace files
+      id: workspace
+      shell: bash
+      working-directory: ${{ inputs.working-directory || '.' }}
+      env:
+        WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
+      run: |
+        if [[ -n "$WORKSPACE_DIRECTORY" ]]; then
+          dir=$(realpath "${GITHUB_WORKSPACE}/${WORKSPACE_DIRECTORY}")
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "files=$(realpath --relative-to=. "$dir/go.work") $(realpath --relative-to=. "$dir/.tool-versions")" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Update dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory || '.' }}
@@ -56,6 +73,7 @@ runs:
         NEEDS_GO_UPDATE: ${{ steps.detect-go-version.outputs.needs_go_update }}
         LATEST_GO_FULL: ${{ steps.detect-go-version.outputs.latest_go_full }}
         PINNED_DEPS: ${{ inputs.pinned-deps }}
+        WORKSPACE_DIR: ${{ steps.workspace.outputs.dir }}
         # actions/setup-go pins GOTOOLCHAIN=local to the version resolved from go.mod, so once
         # this step bumps the go directive to a newer version, `go` needs GOTOOLCHAIN=auto to
         # download and switch to that toolchain itself rather than erroring out.
@@ -69,7 +87,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
-        PR_FILES: go.mod go.sum Dockerfile .tool-versions
+        PR_FILES: go.mod go.sum Dockerfile .tool-versions ${{ steps.workspace.outputs.files }}
         PR_DIFF_EXCLUDE: go.sum
         PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-go' }}
         PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly Go dependency update' }}"

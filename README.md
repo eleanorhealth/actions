@@ -86,6 +86,7 @@ jobs:
 | `pr-labels` | `dependencies,go` | |
 | `base-branch` | `main` | |
 | `working-directory` | `.` | directory with `go.mod`, `Dockerfile` and `.tool-versions`, for monorepos with one module per directory. Each directory's own `.tool-versions` is updated |
+| `workspace-directory` | none | directory with `go.work` and a shared `.tool-versions`. Their Go version is raised (never lowered) along with the module's, and they are committed in the same PR |
 
 Empty strings fall back to the defaults, so `workflow_dispatch` inputs can be forwarded as they are.
 Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.
