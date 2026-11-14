@@ -17,11 +17,19 @@ set -euo pipefail
 #                scoped/curated update PRs). When unset, all direct
 #                dependencies are updated (the normal weekly run).
 #   WORKSPACES - "true" to also update the root and every workspace package.json
+#   COOLDOWN   - minimum age of a version to adopt, as npm-check-updates --cooldown takes it
+#                (default 7d, 0 disables)
 
 PACKAGES="${PACKAGES:-}"
 WORKSPACES="${WORKSPACES:-false}"
+COOLDOWN="${COOLDOWN:-7d}"
 
 ARGS=(-u)
+
+# Supply chain safety: skip versions published within the cooldown window.
+if [[ "$COOLDOWN" != "0" ]]; then
+  ARGS+=(--cooldown "$COOLDOWN")
+fi
 
 PACKAGE_MANAGER=yarn
 if [[ -f pnpm-lock.yaml ]]; then

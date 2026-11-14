@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Moves Node versions to the latest LTS release (even majors only; odd "Current" lines are
+# never targeted) in Dockerfiles (FROM node:), .tool-versions (nodejs) and .nvmrc.
+# Versions only go up, and the precision already used is kept: node:24 stays a major tag,
+# node:24.22 gets a minor tag, node:24.22.3 a full one. Tag suffixes (-alpine) are preserved.
+# Run from the repo root.
+#
+# Env vars:
+#   NODE_FILES - whitespace separated globs of files to update
+#                (default: Dockerfile .nvmrc .tool-versions)
+
+NODE_FILES="${NODE_FILES:-Dockerfile .nvmrc .tool-versions}"
+
+# Entries with a non-false "lts" field are LTS releases; those are always even majors.
+LATEST_NODE=$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '
+  [.[] | select(.lts != false) | .version | ltrimstr("v")]
+  | sort_by(split(".") | map(tonumber))
+  | last')
+
+if [[ -z "$LATEST_NODE" ]] || [[ "$LATEST_NODE" == "null" ]]; then
+  echo "ERROR: could not determine latest Node LTS version from nodejs.org" >&2
+  exit 1
+fi
+echo "Latest Node LTS: $LATEST_NODE"
+export LATEST_NODE
+
+bump_versions() { # file, perl substitution run over each line
+  perl -pi -e '
+    sub bump {
+      my ($cur) = @_;
+      my @cur = split /\./, $cur;
+      my @new = split /\./, $ENV{LATEST_NODE};
+      my $key = sub { join "", map { sprintf "%06d", $_ } (@_, 0, 0)[0 .. 2] };
+      return $cur if $key->(@cur) ge $key->(@new);
+      return join ".", @new[0 .. $#cur];
+    }
+    '"$1" "$2"
+}
+
+shopt -s nullglob
+# shellcheck disable=SC2086 # word splitting and globbing of NODE_FILES is intended
+for node_file in $NODE_FILES; do
+  before=$(cksum < "$node_file")
+  case "$(basename "$node_file")" in
+    .tool-versions) bump_versions 's/^(nodejs\s+)(\d+(?:\.\d+){0,2})/$1 . bump($2)/e' "$node_file" ;;
+    .nvmrc) bump_versions 's/^(v?)(\d+(?:\.\d+){0,2})\s*$/$1 . bump($2) . "\n"/e' "$node_file" ;;
+    *) bump_versions 's/^(FROM\s.*\bnode:)(\d+(?:\.\d+){0,2})/$1 . bump($2)/e' "$node_file" ;;
+  esac
+  if [[ "$before" != "$(cksum < "$node_file")" ]]; then
+    echo "Updated $node_file -> Node $LATEST_NODE"
+  fi
+done

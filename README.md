@@ -35,7 +35,8 @@ Each action is versioned on its own with tags named `<action>/vX.Y.Z`, for examp
 
 Runs `go get <module>@latest` for every direct dependency, bumps the Go version to the latest stable
 release (minor or patch) in `go.mod`, `Dockerfile` (`FROM golang:`) and `.tool-versions` when they exist,
-runs `go mod tidy`, and opens or refreshes one PR on `chore/update-dependencies-go`.
+keeps `golang:<version>` image tags in `cicd/*.yaml` in step with the `go` directive (on every run, not only when
+a new release is out), runs `go mod tidy`, and opens or refreshes one PR on `chore/update-dependencies-go`.
 
 Caller example (the schedule trigger has to live in each repository):
 
@@ -86,6 +87,7 @@ jobs:
 | `pr-labels` | `dependencies,go` | |
 | `base-branch` | `main` | |
 | `working-directory` | `.` | directory with `go.mod`, `Dockerfile` and `.tool-versions`, for monorepos with one module per directory. Each directory's own `.tool-versions` is updated |
+| `image-files` | `cicd/*.yaml cicd/*.yml` | globs, relative to `working-directory`, whose `golang:<version>` image tags (for example Cloud Build steps) follow the `go` directive. The tag suffix, such as `-alpine`, is kept |
 | `workspace-directory` | none | directory with `go.work` and a shared `.tool-versions`. Their Go version is raised (never lowered) along with the module's, and they are committed in the same PR |
 
 Empty strings fall back to the defaults, so `workflow_dispatch` inputs can be forwarded as they are.
@@ -94,9 +96,16 @@ Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.
 ## update-js
 
 Runs [npm-check-updates](https://github.com/raineorshine/npm-check-updates) on the direct dependencies
-(major bumps included), then refreshes the lockfile, and opens or refreshes one PR on
+(major bumps included, versions younger than the cooldown skipped), moves Node to the latest LTS, then refreshes the lockfile, and opens or refreshes one PR on
 `chore/update-dependencies-js`. A repo with a `pnpm-lock.yaml` gets `pnpm install`; any other gets
 `yarn install`. The PR commits `package.json`, `packages/*/package.json` and the lockfile.
+
+Node is moved to the latest LTS release (even majors only, never a "Current" line) in `Dockerfile`
+(`FROM node:`), `.nvmrc` and `.tool-versions`. Versions only go up, the precision is kept (`node:24` stays a
+major tag) and tag suffixes such as `-alpine` are preserved. Other images (postgres, redis, ...) are left alone.
+
+Versions published less than the cooldown ago (default 7 days) are not adopted, so a compromised release
+has time to be caught first.
 
 The action does not install anything: the caller sets up node, the package manager and the registry
 auth (for private `@eleanorhealth` packages) before it, for example with the repo's `bin/setup`, or
@@ -181,6 +190,8 @@ jobs:
 |---|---|---|
 | `github-token` | required | pushes the branch, opens the PR |
 | `packages` | all | comma separated `--filter` globs, for scoped update PRs |
+| `cooldown` | `7d` | minimum age of a version to adopt, [`ncu --cooldown`](https://github.com/raineorshine/npm-check-updates) syntax, `0` disables |
+| `node-files` | `Dockerfile .nvmrc .tool-versions` | globs whose Node version follows the latest LTS |
 | `workspaces` | `false` | `true` also updates the root and every workspace `package.json` |
 | `pr-branch` | `chore/update-dependencies-js` | |
 | `pr-title` | `chore(deps): weekly JS dependency update` | |

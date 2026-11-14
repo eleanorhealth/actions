@@ -36,6 +36,11 @@ inputs:
     required: false
     default: ""
 
+  image-files:
+    description: Whitespace separated globs, relative to working-directory, of files whose golang:<version> image tags follow the go directive (default cicd/*.yaml cicd/*.yml). The Dockerfile is always handled
+    required: false
+    default: ""
+
 outputs:
   updated:
     description: '"true" if a PR was created or refreshed'
@@ -74,6 +79,7 @@ runs:
         LATEST_GO_FULL: ${{ steps.detect-go-version.outputs.latest_go_full }}
         PINNED_DEPS: ${{ inputs.pinned-deps }}
         WORKSPACE_DIR: ${{ steps.workspace.outputs.dir }}
+        IMAGE_FILES: ${{ inputs.image-files || 'cicd/*.yaml cicd/*.yml' }}
         # actions/setup-go pins GOTOOLCHAIN=local to the version resolved from go.mod, so once
         # this step bumps the go directive to a newer version, `go` needs GOTOOLCHAIN=auto to
         # download and switch to that toolchain itself rather than erroring out.
@@ -87,7 +93,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
-        PR_FILES: go.mod go.sum Dockerfile .tool-versions ${{ steps.workspace.outputs.files }}
+        PR_FILES: go.mod go.sum Dockerfile .tool-versions ${{ inputs.image-files || 'cicd/*.yaml cicd/*.yml' }} ${{ steps.workspace.outputs.files }}
         PR_DIFF_EXCLUDE: go.sum
         PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-go' }}
         PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly Go dependency update' }}"

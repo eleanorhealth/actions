@@ -9,6 +9,8 @@ set -euo pipefail
 #   LATEST_GO_FULL   - e.g. "1.27.2"
 #   WORKSPACE_DIR    - absolute path of a go.work / .tool-versions directory to bump too (optional)
 #   PINNED_DEPS      - whitespace separated module paths to leave at their current version
+#   IMAGE_FILES      - whitespace separated globs of files (e.g. Cloud Build configs) whose
+#                      golang:<version> image tags are kept in sync with the go directive
 
 GO_MOD="${GO_MOD_FILE:-go.mod}"
 NEEDS_GO_UPDATE="${NEEDS_GO_UPDATE:-false}"
@@ -16,6 +18,7 @@ LATEST_GO_FULL="${LATEST_GO_FULL:-}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-}"
 TOOL_VERSIONS="${TOOL_VERSIONS_FILE:-.tool-versions}"
+IMAGE_FILES="${IMAGE_FILES:-}"
 
 # Direct dependencies to keep at their current version, whitespace separated
 # (the pinned-deps input). Use for license or other constraints that prevent upgrading.
@@ -83,6 +86,22 @@ if [[ "$NEEDS_GO_UPDATE" == "true" ]] && [[ -n "$LATEST_GO_FULL" ]]; then
       fi
     fi
   fi
+fi
+
+# Keep golang:<version> image tags in CI configs on the go directive. This runs on every
+# run, not only when a new Go release is out, so files that drifted get fixed too.
+# The tag suffix (e.g. -alpine) is preserved.
+GO_VERSION=$(go mod edit -json "$GO_MOD" | jq -r '.Go // empty')
+if [[ -n "$IMAGE_FILES" ]] && [[ -n "$GO_VERSION" ]]; then
+  shopt -s nullglob
+  # shellcheck disable=SC2086 # word splitting and globbing of IMAGE_FILES is intended
+  for image_file in $IMAGE_FILES; do
+    if grep -qE 'golang:[0-9]' "$image_file"; then
+      echo "Updating $image_file image tags: -> golang:$GO_VERSION"
+      sed -i -E "s|(golang:)[0-9][0-9.]*|\1${GO_VERSION}|g" "$image_file"
+    fi
+  done
+  shopt -u nullglob
 fi
 
 echo "Running go mod tidy..."
