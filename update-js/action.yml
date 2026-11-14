@@ -17,6 +17,14 @@ inputs:
     description: '"true" to also update the root and every workspace package.json (yarn or pnpm workspaces)'
     required: false
     default: "false"
+  cooldown:
+    description: Minimum age of a package version or Node release before it is adopted, e.g. 7d, 12h (default 7d, 0 disables). Newly published versions are the likeliest to be compromised
+    required: false
+    default: ""
+  node-files:
+    description: Whitespace separated globs of files whose Node version moves to the latest LTS, Dockerfile (FROM node:), .nvmrc and .tool-versions (default Dockerfile .nvmrc .tool-versions)
+    required: false
+    default: ""
   pr-branch:
     description: Branch the update is pushed to (default chore/update-dependencies-js)
     required: false
@@ -45,11 +53,19 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Update Node version
+      shell: bash
+      env:
+        NODE_FILES: ${{ inputs.node-files || 'Dockerfile .nvmrc .tool-versions' }}
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
+      run: bash "${{ github.action_path }}/bin/update-node"
+
     - name: Update dependencies
       shell: bash
       env:
         PACKAGES: ${{ inputs.packages }}
         WORKSPACES: ${{ inputs.workspaces }}
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
       run: bash "${{ github.action_path }}/bin/update-deps"
 
     - name: Create PR
@@ -58,15 +74,16 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
-        PR_FILES: package.json packages/*/package.json yarn.lock pnpm-lock.yaml
+        PR_FILES: package.json packages/*/package.json yarn.lock pnpm-lock.yaml ${{ inputs.node-files || 'Dockerfile .nvmrc .tool-versions' }}
         PR_DIFF_EXCLUDE: yarn.lock pnpm-lock.yaml
         PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-js' }}
         PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly JS dependency update' }}"
         PR_COMMIT_MESSAGE: "chore(deps): update JS dependencies"
         PR_BODY_HEADING: JS dependency updates
         PR_BODY_INTRO: >-
-          Direct dependencies were updated to their latest version, including major
-          versions. Check CI and review the diff for breaking changes before merging.
+          Direct dependencies were updated to their latest version that is at least the cooldown
+          old (default 7 days), including major versions, and Node was moved to the latest LTS.
+          Check CI and review the diff for breaking changes before merging.
         PR_LABELS: ${{ inputs.pr-labels || 'dependencies,javascript' }}
         BASE_BRANCH: ${{ inputs.base-branch || 'main' }}
       run: bash "${{ github.action_path }}/../lib/create-pr"

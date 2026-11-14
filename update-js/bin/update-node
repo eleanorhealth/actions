@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Moves Node versions to the latest LTS release past the cooldown (even majors only; odd "Current" lines are
+# never targeted) in Dockerfiles (FROM node:), .tool-versions (nodejs) and .nvmrc.
+# Versions only go up, and the precision already used is kept: node:24 stays a major tag,
+# node:24.22 gets a minor tag, node:24.22.3 a full one. Tag suffixes (-alpine) are preserved.
+# Run from the repo root.
+#
+# Env vars:
+#   NODE_FILES - whitespace separated globs of files to update
+#                (default: Dockerfile .nvmrc .tool-versions)
+#   COOLDOWN   - minimum age of a release to adopt, e.g. 7d (default), 0 disables.
+#                A release held back by it is reported with a warning.
+
+NODE_FILES="${NODE_FILES:-Dockerfile .nvmrc .tool-versions}"
+
+# shellcheck source=../../lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
+
+COOLDOWN_SECONDS=$(cooldown_seconds "${COOLDOWN:-7d}")
+NOW=$(date -u +%s)
+
+# Entries with a non-false "lts" field are LTS releases; those are always even majors.
+# The index only has release dates, so a release counts as published at 00:00 UTC that day.
+INDEX=$(curl -fsSL https://nodejs.org/dist/index.json)
+LTS_RELEASES='[.[] | select(.lts != false)]'
+SORT_BY_VERSION='sort_by(.version | ltrimstr("v") | split(".") | map(tonumber))'
+
+NEWEST_NODE=$(jq -r "$LTS_RELEASES | $SORT_BY_VERSION | last | .version // empty | ltrimstr(\"v\")" <<< "$INDEX")
+LATEST_NODE=$(jq -r --argjson cutoff "$((NOW - COOLDOWN_SECONDS))" \
+  "$LTS_RELEASES | map(select((.date + \"T00:00:00Z\" | fromdateiso8601) <= \$cutoff)) | $SORT_BY_VERSION | last | .version // empty | ltrimstr(\"v\")" <<< "$INDEX")
+
+if [[ -z "$NEWEST_NODE" ]]; then
+  echo "ERROR: could not determine latest Node LTS version from nodejs.org" >&2
+  exit 1
+fi
+echo "Latest Node LTS: $NEWEST_NODE"
+
+if [[ "$NEWEST_NODE" != "$LATEST_NODE" ]]; then
+  newest_date=$(jq -r --arg version "v$NEWEST_NODE" '.[] | select(.version == $version) | .date' <<< "$INDEX")
+  warn "Node $NEWEST_NODE held back" "released on $newest_date, inside the ${COOLDOWN:-7d} cooldown${LATEST_NODE:+, using $LATEST_NODE}"
+fi
+if [[ -z "$LATEST_NODE" ]]; then
+  echo "No Node LTS release is past the cooldown, leaving Node as it is."
+  exit 0
+fi
+echo "Node version to use: $LATEST_NODE"
+export LATEST_NODE
+
+bump_versions() { # file, perl substitution run over each line
+  perl -pi -e '
+    sub bump {
+      my ($cur) = @_;
+      my @cur = split /\./, $cur;
+      my @new = split /\./, $ENV{LATEST_NODE};
+      my $key = sub { join "", map { sprintf "%06d", $_ } (@_, 0, 0)[0 .. 2] };
+      return $cur if $key->(@cur) ge $key->(@new);
+      return join ".", @new[0 .. $#cur];
+    }
+    '"$1" "$2"
+}
+
+shopt -s nullglob
+# shellcheck disable=SC2086 # word splitting and globbing of NODE_FILES is intended
+for node_file in $NODE_FILES; do
+  [[ -f "$node_file" ]] || continue # plain names are not dropped by nullglob
+  before=$(cksum < "$node_file")
+  case "$(basename "$node_file")" in
+    .tool-versions) bump_versions 's/^(nodejs\s+)(\d+(?:\.\d+){0,2})/$1 . bump($2)/e' "$node_file" ;;
+    .nvmrc) bump_versions 's/^(v?)(\d+(?:\.\d+){0,2})\s*$/$1 . bump($2) . "\n"/e' "$node_file" ;;
+    *) bump_versions 's/^(FROM\s.*\bnode:)(\d+(?:\.\d+){0,2})/$1 . bump($2)/e' "$node_file" ;;
+  esac
+  if [[ "$before" != "$(cksum < "$node_file")" ]]; then
+    echo "Updated $node_file -> Node $LATEST_NODE"
+  fi
+done
