@@ -48,9 +48,9 @@ Language versions warn because a held-back Go or Node release can be a security 
 to be adopted. A Go release the proxy does not know yet counts as inside the cooldown. Module and
 package versions are only logged, since there is always another one coming.
 
-`update-js` runs a pinned `npm-check-updates` (`NCU_VERSION` in `update-js/bin/update-deps`), so a hijacked
-release of the tool itself does not run with the job's token. Bump the pin by hand, to a release that is
-past the cooldown.
+`update-js` also runs an exact `npm-check-updates` version, the newest release past the same cooldown
+(logged as `Using npm-check-updates X`), so a hijacked release of the tool itself does not run with the
+job's token the day it is published. Nothing to bump by hand. Set `NCU_VERSION` in the job env to force one.
 
 ## update-go
 

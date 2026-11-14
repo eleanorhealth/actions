@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prints the newest stable npm-check-updates release that is at least the cooldown old, so the
+# tool itself is not adopted the moment it is published. Fails rather than falling back to latest.
+#
+# Env vars:
+#   COOLDOWN - minimum age of a release, e.g. 7d (default), 0 disables
+
+# shellcheck source=../../lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
+
+CUTOFF=$(( $(date -u +%s) - $(cooldown_seconds "${COOLDOWN:-7d}") ))
+
+# "time" maps every version to its publish time, plus "created" and "modified"
+VERSION=$(npm view npm-check-updates time --json | jq -r --argjson cutoff "$CUTOFF" '
+  to_entries
+  | map(select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))
+  | map(select((.value | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) <= $cutoff))
+  | sort_by(.key | split(".") | map(tonumber))
+  | last | .key // empty')
+
+if [[ -z "$VERSION" ]]; then
+  echo "ERROR: could not find an npm-check-updates release past the cooldown" >&2
+  exit 1
+fi
+
+echo "$VERSION"
