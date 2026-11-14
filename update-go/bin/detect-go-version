@@ -8,7 +8,7 @@ set -euo pipefail
 #   needs_go_update  - "true" if the latest release (minor or patch) is newer than current
 #   current_go_minor - e.g. "1.26"
 #   latest_go_minor  - e.g. "1.27"
-#   latest_go_full   - e.g. "1.27.2"
+#   latest_go_full   - e.g. "1.27.2", the newest release past the cooldown (COOLDOWN, default 7d)
 
 GO_MOD="${GO_MOD_FILE:-go.mod}"
 
@@ -21,24 +21,63 @@ CURRENT_MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f1-2)
 
 echo "Current Go version in $GO_MOD: $CURRENT_VERSION (minor: $CURRENT_MINOR)"
 
-# Fetch latest stable release from go.dev
-LATEST_FULL=$(curl -fsSL "https://go.dev/dl/?mode=json" | \
+# shellcheck source=../../lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
+
+COOLDOWN_SECONDS=$(cooldown_seconds "${COOLDOWN:-7d}")
+NOW=$(date -u +%s)
+# go.dev has no release dates, the module proxy has them for the toolchain downloads
+TOOLCHAIN_PROXY="${GO_TOOLCHAIN_PROXY:-https://proxy.golang.org/golang.org/toolchain/@v}"
+
+# Release time of a Go version as epoch seconds, empty when the proxy does not know it (yet).
+release_time() {
+  local published
+  published=$(curl -fsSL "$TOOLCHAIN_PROXY/v0.0.1-go$1.linux-amd64.info" 2>/dev/null | jq -r '.Time // empty') || return 0
+  [[ -n "$published" ]] && date -u -d "$published" +%s
+  return 0
+}
+
+# Stable releases from go.dev, newest first
+RELEASES=$(curl -fsSL "https://go.dev/dl/?mode=json" | \
   jq -r '[.[] | select(.stable==true) | .version] |
           map(select(test("^go[0-9]+\\.[0-9]+\\.[0-9]+$"))) |
-          sort_by(ltrimstr("go") | split(".") | map(tonumber)) |
-          last |
-          ltrimstr("go")')
+          map(ltrimstr("go")) |
+          sort_by(split(".") | map(tonumber)) |
+          reverse | .[]')
 
-if [[ -z "$LATEST_FULL" ]]; then
+if [[ -z "$RELEASES" ]]; then
   echo "ERROR: could not determine latest Go version from go.dev" >&2
   exit 1
 fi
 
+NEWEST_FULL=$(head -1 <<< "$RELEASES")
+echo "Latest Go version on go.dev: $NEWEST_FULL"
+
+# Newest release that is at least the cooldown old and newer than the current one.
+# A language version is held back with a warning, unlike libraries.
+LATEST_FULL=""
+while read -r release; do
+  [[ "$(printf '%s\n%s\n' "$CURRENT_VERSION" "$release" | sort -V | head -1)" == "$release" ]] && break # not newer than current
+  if (( COOLDOWN_SECONDS == 0 )); then
+    LATEST_FULL="$release"
+    break
+  fi
+  published=$(release_time "$release")
+  if [[ -z "$published" ]]; then
+    warn "Go $release held back" "release time unknown, treating it as inside the ${COOLDOWN:-7d} cooldown"
+  elif (( NOW - published >= COOLDOWN_SECONDS )); then
+    LATEST_FULL="$release"
+    break
+  else
+    warn "Go $release held back" "released $(age_days "$published" "$NOW") days ago, inside the ${COOLDOWN:-7d} cooldown"
+  fi
+done <<< "$RELEASES"
+
+# Nothing eligible: stay where we are
+LATEST_FULL="${LATEST_FULL:-$CURRENT_VERSION}"
 LATEST_MINOR=$(echo "$LATEST_FULL" | cut -d. -f1-2)
 
-echo "Latest Go version on go.dev: $LATEST_FULL (minor: $LATEST_MINOR)"
-
-# Compare full versions: update when the latest minor or patch is newer
+# Compare full versions: update when the eligible minor or patch is newer
 NEEDS_GO_UPDATE="false"
 if [[ "$CURRENT_VERSION" != "$LATEST_FULL" ]]; then
   # sort -V puts the lower version first; if current comes first it's older

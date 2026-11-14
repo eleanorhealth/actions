@@ -36,6 +36,10 @@ inputs:
     required: false
     default: ""
 
+  cooldown:
+    description: Minimum age of a Go release or module version before it is adopted, e.g. 7d, 12h (default 7d, 0 disables). A Go release held back by it is reported as a warning
+    required: false
+    default: ""
   image-files:
     description: Whitespace separated globs, relative to working-directory, of files whose golang:<version> image tags follow the go directive (default cicd/*.yaml cicd/*.yml). The Dockerfile is always handled
     required: false
@@ -56,6 +60,8 @@ runs:
       id: detect-go-version
       shell: bash
       working-directory: ${{ inputs.working-directory || '.' }}
+      env:
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
       run: bash "${{ github.action_path }}/bin/detect-go-version"
 
     - name: Resolve workspace files
@@ -79,6 +85,7 @@ runs:
         LATEST_GO_FULL: ${{ steps.detect-go-version.outputs.latest_go_full }}
         PINNED_DEPS: ${{ inputs.pinned-deps }}
         WORKSPACE_DIR: ${{ steps.workspace.outputs.dir }}
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
         IMAGE_FILES: ${{ inputs.image-files || 'cicd/*.yaml cicd/*.yml' }}
         # actions/setup-go pins GOTOOLCHAIN=local to the version resolved from go.mod, so once
         # this step bumps the go directive to a newer version, `go` needs GOTOOLCHAIN=auto to

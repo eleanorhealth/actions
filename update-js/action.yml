@@ -18,7 +18,7 @@ inputs:
     required: false
     default: "false"
   cooldown:
-    description: Minimum age of a package version before it is adopted, as npm-check-updates --cooldown accepts it, e.g. 7d (default 7d, 0 disables). Newly published versions are the likeliest to be compromised
+    description: Minimum age of a package version or Node release before it is adopted, e.g. 7d, 12h (default 7d, 0 disables). Newly published versions are the likeliest to be compromised
     required: false
     default: ""
   node-files:
@@ -57,6 +57,7 @@ runs:
       shell: bash
       env:
         NODE_FILES: ${{ inputs.node-files || 'Dockerfile .nvmrc .tool-versions' }}
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
       run: bash "${{ github.action_path }}/bin/update-node"
 
     - name: Update dependencies

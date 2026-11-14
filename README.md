@@ -31,10 +31,31 @@ Each action is versioned on its own with tags named `<action>/vX.Y.Z`, for examp
 - A change under `lib/` only reaches callers once each action that uses it is re-tagged.
 - Breaking changes get a new major (`v2`), callers opt in by changing the ref.
 
+## Cooldown
+
+Both actions skip versions that were published less than a cooldown ago (`cooldown` input, default `7d`,
+also `12h`, `30m`, or `0` to turn it off). Most compromised releases are caught within days, so waiting
+keeps a hijacked release out of the weekly PR.
+
+| What | How the age is read | When held back |
+|---|---|---|
+| npm packages | `npm-check-updates --cooldown` | the newest version past the cooldown is used, silently |
+| Go modules | publish time from the Go module proxy | the newest release past the cooldown is used, or the module stays as it is, with a line in the log |
+| Go version (`go.mod`, `golang:` tags) | publish time of the toolchain on the Go module proxy | a **warning annotation** on the run, the previous version stays |
+| Node version | release date from nodejs.org, taken as 00:00 UTC that day | a **warning annotation** on the run, the newest older LTS is used |
+
+Language versions warn because a held-back Go or Node release can be a security fix that is waiting
+to be adopted. A Go release the proxy does not know yet counts as inside the cooldown. Module and
+package versions are only logged, since there is always another one coming.
+
+`update-js` runs a pinned `npm-check-updates` (`NCU_VERSION` in `update-js/bin/update-deps`), so a hijacked
+release of the tool itself does not run with the job's token. Bump the pin by hand, to a release that is
+past the cooldown.
+
 ## update-go
 
-Runs `go get <module>@latest` for every direct dependency, bumps the Go version to the latest stable
-release (minor or patch) in `go.mod`, `Dockerfile` (`FROM golang:`) and `.tool-versions` when they exist,
+Runs `go get` for every direct dependency, bumps the Go version to the latest stable
+release (minor or patch) past the [cooldown](#cooldown) in `go.mod`, `Dockerfile` (`FROM golang:`) and `.tool-versions` when they exist,
 keeps `golang:<version>` image tags in `cicd/*.yaml` in step with the `go` directive (on every run, not only when
 a new release is out), runs `go mod tidy`, and opens or refreshes one PR on `chore/update-dependencies-go`.
 
@@ -87,6 +108,7 @@ jobs:
 | `pr-labels` | `dependencies,go` | |
 | `base-branch` | `main` | |
 | `working-directory` | `.` | directory with `go.mod`, `Dockerfile` and `.tool-versions`, for monorepos with one module per directory. Each directory's own `.tool-versions` is updated |
+| `cooldown` | `7d` | minimum age of a Go release or module version to adopt, `0` disables, see [Cooldown](#cooldown) |
 | `image-files` | `cicd/*.yaml cicd/*.yml` | globs, relative to `working-directory`, whose `golang:<version>` image tags (for example Cloud Build steps) follow the `go` directive. The tag suffix, such as `-alpine`, is kept |
 | `workspace-directory` | none | directory with `go.work` and a shared `.tool-versions`. Their Go version is raised (never lowered) along with the module's, and they are committed in the same PR |
 
@@ -104,8 +126,8 @@ Node is moved to the latest LTS release (even majors only, never a "Current" lin
 (`FROM node:`), `.nvmrc` and `.tool-versions`. Versions only go up, the precision is kept (`node:24` stays a
 major tag) and tag suffixes such as `-alpine` are preserved. Other images (postgres, redis, ...) are left alone.
 
-Versions published less than the cooldown ago (default 7 days) are not adopted, so a compromised release
-has time to be caught first.
+Versions published less than the [cooldown](#cooldown) ago (default 7 days) are not adopted, Node releases
+included.
 
 The action does not install anything: the caller sets up node, the package manager and the registry
 auth (for private `@eleanorhealth` packages) before it, for example with the repo's `bin/setup`, or
@@ -190,7 +212,7 @@ jobs:
 |---|---|---|
 | `github-token` | required | pushes the branch, opens the PR |
 | `packages` | all | comma separated `--filter` globs, for scoped update PRs |
-| `cooldown` | `7d` | minimum age of a version to adopt, [`ncu --cooldown`](https://github.com/raineorshine/npm-check-updates) syntax, `0` disables |
+| `cooldown` | `7d` | minimum age of a package version or Node release to adopt, `0` disables, see [Cooldown](#cooldown) |
 | `node-files` | `Dockerfile .nvmrc .tool-versions` | globs whose Node version follows the latest LTS |
 | `workspaces` | `false` | `true` also updates the root and every workspace `package.json` |
 | `pr-branch` | `chore/update-dependencies-js` | |

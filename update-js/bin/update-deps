@@ -19,6 +19,7 @@ set -euo pipefail
 #   WORKSPACES - "true" to also update the root and every workspace package.json
 #   COOLDOWN   - minimum age of a version to adopt, as npm-check-updates --cooldown takes it
 #                (default 7d, 0 disables)
+#   NCU_VERSION - npm-check-updates version to run (default: the version pinned below)
 
 PACKAGES="${PACKAGES:-}"
 WORKSPACES="${WORKSPACES:-false}"
@@ -49,7 +50,10 @@ else
   echo "Updating direct dependencies..."
 fi
 
-npx --yes npm-check-updates@latest "${ARGS[@]}"
+# Pinned so a hijacked npm-check-updates release does not run with this job's token. Bump it by
+# hand, to a release that is past the cooldown. --cooldown needs npm-check-updates 20 or newer.
+NCU_VERSION="${NCU_VERSION:-23.1.1}"
+npx --yes "npm-check-updates@${NCU_VERSION}" "${ARGS[@]}"
 
 node "$(dirname "${BASH_SOURCE[0]}")/sync-resolutions"
 
