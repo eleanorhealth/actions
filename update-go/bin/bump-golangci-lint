@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bumps the golangci-lint version pinned in workflow files, the `version:` input of
+# golangci/golangci-lint-action steps, to the newest release past the cooldown.
+#
+#   uses: golangci/golangci-lint-action@v9.3.0
+#   with:
+#     version: v2.15     # bumped to v2.16 once v2.16.x is COOLDOWN old
+#
+# The pin keeps its precision (v2.15 stays a minor pin, v2.15.1 a patch pin) and its quotes.
+# Pins that are not plain versions (latest, v2.x) are left alone, a newer major is never adopted,
+# and versions only go up. Workflow files are only edited, never created.
+#
+# Environment variables:
+#   WORKFLOW_FILES  - whitespace separated globs of workflow files, relative to the repository
+#                     root (default: .github/workflows/*.yml .github/workflows/*.yaml)
+#   COOLDOWN        - minimum age of a release to adopt, e.g. 7d (default), 0 disables
+#   GH_TOKEN        - optional, authenticates the release lookup to avoid rate limits
+#   GOLANGCI_LINT_RELEASES_URL - override of the releases API URL, for tests (file:// works)
+#
+# Outputs (to $GITHUB_OUTPUT in CI):
+#   changed - whitespace separated repository-root pathspecs (":/path") of the files edited
+
+WORKFLOW_FILES="${WORKFLOW_FILES:-.github/workflows/*.yml .github/workflows/*.yaml}"
+RELEASES_URL="${GOLANGCI_LINT_RELEASES_URL:-https://api.github.com/repos/golangci/golangci-lint/releases?per_page=100}"
+
+# shellcheck source=../../lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
+
+COOLDOWN_SECONDS=$(cooldown_seconds "${COOLDOWN:-7d}")
+NOW=$(date -u +%s)
+
+cd "$(git rev-parse --show-toplevel)"
+
+read -r -d '' -a SPECS <<< "$WORKFLOW_FILES" || true
+mapfile -t FILES < <(git ls-files -- "${SPECS[@]}")
+
+# Lines of a workflow file: with `from` empty, prints the pinned version of every
+# golangci-lint-action step; otherwise rewrites the pins equal to `from` to `to`.
+# A step runs from its `uses:` line until a line indented less than the step's keys.
+read -r -d '' AWK_PROG <<'EOF' || true
+function indent(s) { match(s, /^ */); return RLENGTH }
+{
+  line = $0
+  if (line ~ /^[ ]*(-[ ]+)?uses:[ ]*["']?golangci\/golangci-lint-action@/) {
+    in_step = 1
+    match(line, /uses:/)
+    key_col = RSTART - 1
+  } else if (in_step && line !~ /^[ ]*(#.*)?$/ && indent(line) < key_col) {
+    in_step = 0
+  }
+  if (in_step && line ~ /^[ ]+version:[ ]*/ && indent(line) > key_col) {
+    rest = line
+    sub(/^[ ]+version:[ ]*/, "", rest)
+    pre = substr(line, 1, length(line) - length(rest))
+    quote = ""
+    if (substr(rest, 1, 1) ~ /["']/) { quote = substr(rest, 1, 1); rest = substr(rest, 2) }
+    tok = rest
+    sub(/["' #].*$/, "", tok)
+    bare = tok
+    sub(/^v/, "", bare)
+    if (bare ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?$/) {
+      if (from == "") print bare
+      else if (bare == from) {
+        line = pre quote (tok ~ /^v/ ? "v" : "") to substr(rest, length(tok) + 1)
+      }
+    }
+  }
+  if (from != "") print line
+}
+EOF
+
+# Distinct current pins, e.g. "2.15"
+declare -A PIN_FILES=()
+for file in "${FILES[@]}"; do
+  while read -r pin; do
+    [[ -n "$pin" && " ${PIN_FILES[$pin]:-}" != *" $file "* ]] && PIN_FILES["$pin"]+="$file " || true
+  done < <(awk "$AWK_PROG" "$file")
+done
+
+if [[ ${#PIN_FILES[@]} -eq 0 ]]; then
+  echo "No golangci-lint-action version pins found in: ${SPECS[*]}"
+  [[ -n "${GITHUB_OUTPUT:-}" ]] && echo "changed=" >> "$GITHUB_OUTPUT"
+  exit 0
+fi
+
+curl_args=(-fsSL -H "Accept: application/vnd.github+json")
+[[ -n "${GH_TOKEN:-}" ]] && curl_args+=(-H "Authorization: Bearer $GH_TOKEN")
+
+# Stable releases as "version published_at", newest first
+if ! RELEASES=$(curl "${curl_args[@]}" "$RELEASES_URL" | jq -r '
+    [.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))]
+    | sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber)) | reverse
+    | .[] | "\(.tag_name | ltrimstr("v")) \(.published_at)"') || [[ -z "$RELEASES" ]]; then
+  # The Go dependency update matters more than this optional bump: warn, do not fail the run
+  warn "golangci-lint not bumped" "could not read the golangci-lint releases from $RELEASES_URL"
+  [[ -n "${GITHUB_OUTPUT:-}" ]] && echo "changed=" >> "$GITHUB_OUTPUT"
+  exit 0
+fi
+
+CHANGED=()
+for pin in "${!PIN_FILES[@]}"; do
+  major="${pin%%.*}"
+  has_patch="false"
+  [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && has_patch="true"
+
+  # Newest release of the same major that is past the cooldown
+  target=""
+  while read -r release published; do
+    [[ "${release%%.*}" == "$major" ]] || continue
+    if (( COOLDOWN_SECONDS > 0 )); then
+      published_at=$(date -u -d "$published" +%s)
+      if (( NOW - published_at < COOLDOWN_SECONDS )); then
+        echo "golangci-lint v$release is $(age_days "$published_at" "$NOW") days old, inside the ${COOLDOWN:-7d} cooldown, skipped"
+        continue
+      fi
+    fi
+    target="$release"
+    break
+  done <<< "$RELEASES"
+
+  if [[ -z "$target" ]]; then
+    echo "golangci-lint v$pin: no release past the cooldown, kept"
+    continue
+  fi
+
+  # Keep the precision of the pin, and only ever go up
+  if [[ "$has_patch" == "true" ]]; then
+    new="$target"
+  else
+    new="$(cut -d. -f1-2 <<< "$target")"
+  fi
+  if [[ "$(printf '%s\n%s\n' "$pin" "$new" | sort -V | tail -1)" != "$new" || "$pin" == "$new" ]]; then
+    echo "golangci-lint v$pin is up to date (newest eligible: v$target)"
+    continue
+  fi
+
+  for file in ${PIN_FILES[$pin]}; do
+    tmp=$(mktemp)
+    awk -v from="$pin" -v to="$new" "$AWK_PROG" "$file" > "$tmp"
+    cat "$tmp" > "$file" # keeps the file mode
+    rm -f "$tmp"
+    echo "golangci-lint v$pin -> v$new in $file"
+    [[ " ${CHANGED[*]:-} " == *" :/$file "* ]] || CHANGED+=(":/$file")
+  done
+done
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "changed=${CHANGED[*]:-}" >> "$GITHUB_OUTPUT"
+fi

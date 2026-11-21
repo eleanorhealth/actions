@@ -110,10 +110,46 @@ jobs:
 | `working-directory` | `.` | directory with `go.mod`, `Dockerfile` and `.tool-versions`, for monorepos with one module per directory. Each directory's own `.tool-versions` is updated |
 | `cooldown` | `7d` | minimum age of a Go release or module version to adopt, `0` disables, see [Cooldown](#cooldown) |
 | `image-files` | `cicd/*.yaml cicd/*.yml` | globs, relative to `working-directory`, whose `golang:<version>` image tags (for example Cloud Build steps) follow the `go` directive. The tag suffix, such as `-alpine`, is kept |
+| `bump-golangci-lint` | `false` | `true` also bumps the golangci-lint version pinned in workflow files, see [golangci-lint](#golangci-lint) |
+| `golangci-lint-files` | `.github/workflows/*.yml .github/workflows/*.yaml` | globs, relative to the repository root, of the workflow files to bump. A monorepo matrix that opens one PR per module passes the module's own workflow so the PRs do not edit the same files |
 | `workspace-directory` | none | directory with `go.work` and a shared `.tool-versions`. Their Go version is raised (never lowered) along with the module's, and they are committed in the same PR |
 
 Empty strings fall back to the defaults, so `workflow_dispatch` inputs can be forwarded as they are.
 Outputs: `updated` (`true` if a PR was created or refreshed) and `pr-url`.
+
+### golangci-lint
+
+A `golangci/golangci-lint-action` step pins the linter in its `version:` input, which Dependabot does not read.
+A linter built with an older Go than the module's `go` directive refuses to run, so a Go bump breaks lint until the pin follows.
+With `bump-golangci-lint: "true"`, the action moves that pin to the newest release past the [cooldown](#cooldown) and commits the workflow file in the same PR.
+
+- The pin keeps its precision (`v2.15` stays a minor pin, `v2.15.1` a patch pin), its quotes and its comment.
+- Only plain versions are touched: `latest` and anything else is left alone. Versions only go up and a new major is never adopted.
+- A release inside the cooldown is logged and skipped.
+- A failed release lookup is a warning on the run, it does not fail the Go update.
+
+**Token.** The default `GITHUB_TOKEN` cannot push changes under `.github/workflows`, GitHub rejects the push, and that would fail
+the whole update, Go dependencies included. Use this only with a token that has the `workflows` permission, for example a
+GitHub App installation token (Contents, Pull requests and Workflows read and write). An installation token is minted on every run,
+so nothing expires. It has to reach `actions/checkout` as well, because `lib/create-pr` pushes with the credential checkout stored:
+
+```yaml
+- uses: actions/create-github-app-token@<version>
+  id: app-token
+  with:
+    app-id: ${{ secrets.APP_ID }}
+    private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+- uses: actions/checkout@v6.0.2
+  with:
+    fetch-depth: 0
+    token: ${{ steps.app-token.outputs.token }}
+
+- uses: eleanorhealth/actions/update-go@update-go/v1
+  with:
+    github-token: ${{ steps.app-token.outputs.token }}
+    bump-golangci-lint: "true"
+```
 
 ## update-js
 
