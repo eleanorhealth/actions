@@ -44,6 +44,14 @@ inputs:
     description: Whitespace separated globs, relative to working-directory, of files whose golang:<version> image tags follow the go directive (default cicd/*.yaml cicd/*.yml). The Dockerfile is always handled
     required: false
     default: ""
+  bump-golangci-lint:
+    description: '"true" bumps the golangci-lint version pinned in workflow files (default false). Pushing workflow files needs a token with the workflows permission, such as a GitHub App token, see the README'
+    required: false
+    default: "false"
+  golangci-lint-files:
+    description: Whitespace separated globs, relative to the repository root, of the workflow files whose golangci-lint-action version is bumped (default .github/workflows/*.yml .github/workflows/*.yaml). Only used with bump-golangci-lint
+    required: false
+    default: ""
 
 outputs:
   updated:
@@ -93,6 +101,16 @@ runs:
         GOTOOLCHAIN: auto
       run: bash "${{ github.action_path }}/bin/update-deps"
 
+    - name: Bump golangci-lint
+      id: bump-golangci-lint
+      if: inputs.bump-golangci-lint == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        COOLDOWN: ${{ inputs.cooldown || '7d' }}
+        WORKFLOW_FILES: ${{ inputs.golangci-lint-files || '.github/workflows/*.yml .github/workflows/*.yaml' }}
+      run: bash "${{ github.action_path }}/bin/bump-golangci-lint"
+
     - name: Create PR
       id: create-pr
       shell: bash
@@ -100,7 +118,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         # Inputs fall back with || because callers forward empty strings (e.g. workflow_dispatch inputs)
-        PR_FILES: go.mod go.sum Dockerfile .tool-versions ${{ inputs.image-files || 'cicd/*.yaml cicd/*.yml' }} ${{ steps.workspace.outputs.files }}
+        PR_FILES: go.mod go.sum Dockerfile .tool-versions ${{ inputs.image-files || 'cicd/*.yaml cicd/*.yml' }} ${{ steps.workspace.outputs.files }} ${{ steps.bump-golangci-lint.outputs.changed }}
         PR_DIFF_EXCLUDE: go.sum
         PR_BRANCH: ${{ inputs.pr-branch || 'chore/update-dependencies-go' }}
         PR_TITLE: "${{ inputs.pr-title || 'chore(deps): weekly Go dependency update' }}"
